@@ -1,0 +1,839 @@
+app:
+  description: 動画から自動的にドキュメントを生成するワークフロー。スナップショット抽出、文字起こし、マルチモーダル分析を行います。
+  icon: 🎬
+  icon_background: '#6366F1'
+  mode: workflow
+  name: Video Documentation Workflow
+  use_icon_as_answer_icon: false
+
+kind: app
+version: 0.1.2
+
+workflow:
+  environment_variables: []
+  conversation_variables: []
+  features:
+    file_upload:
+      image:
+        enabled: false
+    opening_statement: 動画をアップロードすると、自動的にスナップショットを抽出し、文字起こしと画像分析を行ってドキュメントを生成します。
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions:
+      - どのくらいの時間で処理が完了しますか？
+      - 対応している動画形式は何ですか？
+      - 重要度スコアはどのように計算されますか？
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+
+  graph:
+    edges:
+      # Start -> Code Node 1 (Video Processing)
+      - source: '1770557302578'
+        sourceHandle: source
+        target: '1770557302678'
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: start
+          targetType: code
+          isInIteration: false
+
+      # Code Node 1 -> LLM Node 1 (Transcription)
+      - source: '1770557302678'
+        sourceHandle: audio_file
+        target: '1770557302778'
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: code
+          targetType: llm
+          isInIteration: false
+
+      # Code Node 1 -> Code Node 2 (Data Linking)
+      - source: '1770557302678'
+        sourceHandle: snapshots
+        target: '1770557302878'
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: code
+          targetType: code
+          isInIteration: false
+
+      # LLM Node 1 -> Code Node 2 (Data Linking)
+      - source: '1770557302778'
+        sourceHandle: source
+        target: '1770557302878'
+        targetHandle: transcript
+        type: custom
+        data:
+          sourceType: llm
+          targetType: code
+          isInIteration: false
+
+      # Code Node 2 -> Code Node 3 (Batch Splitting)
+      - source: '1770557302878'
+        sourceHandle: source
+        target: '1770557302978'
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: code
+          targetType: code
+          isInIteration: false
+
+      # Code Node 3 -> Iteration Node
+      - source: '1770557302978'
+        sourceHandle: source
+        target: '1770557303078'
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: code
+          targetType: iteration
+          isInIteration: false
+
+      # Iteration Node -> LLM Node 2 (Image Analysis)
+      - source: '1770557303078'
+        sourceHandle: source
+        target: '1770557303178'
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: iteration
+          targetType: llm
+          isInIteration: true
+
+      # LLM Node 2 -> Code Node 4 (Importance Scoring)
+      - source: '1770557303178'
+        sourceHandle: source
+        target: '1770557303278'
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: llm
+          targetType: code
+          isInIteration: true
+
+      # Code Node 4 -> Code Node 5 (Collect Results)
+      - source: '1770557303278'
+        sourceHandle: source
+        target: '1770557303378'
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: code
+          targetType: code
+          isInIteration: true
+
+      # Code Node 5 -> LLM Node 3 (Action Items)
+      - source: '1770557303378'
+        sourceHandle: source
+        target: '1770557303478'
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: code
+          targetType: llm
+          isInIteration: false
+
+      # Code Node 5 -> Template Transform
+      - source: '1770557303378'
+        sourceHandle: source
+        target: '1770557303578'
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: code
+          targetType: template-transform
+          isInIteration: false
+
+      # LLM Node 3 -> Template Transform
+      - source: '1770557303478'
+        sourceHandle: source
+        target: '1770557303578'
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: llm
+          targetType: template-transform
+          isInIteration: false
+
+      # Template Transform -> End Node
+      - source: '1770557303578'
+        sourceHandle: source
+        target: '1770557303678'
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: template-transform
+          targetType: end
+          isInIteration: false
+
+    nodes:
+      # Start Node
+      - data:
+          type: start
+          variables:
+            - variable: video_file
+              type: file
+              label: 動画ファイル
+              required: true
+              max_length: 1
+            - variable: interval_seconds
+              type: number
+              label: スナップショット間隔（秒）
+              required: false
+              default: 90
+              min: 10
+              max: 600
+            - variable: context_range
+              type: number
+              label: コンテキスト範囲（秒）
+              required: false
+              default: 30
+              min: 10
+              max: 120
+        id: '1770557302578'
+        position:
+          x: 80
+          y: 200
+        type: custom
+
+      # Code Node 1: Video Processing (Audio Extraction + Snapshot Capture)
+      - data:
+          type: code
+          title: 動画処理
+          code: |
+            import cv2
+            import base64
+            import io
+            import os
+            from PIL import Image
+            from typing import Dict, List, Any
+            import subprocess
+            import tempfile
+
+            def extract_audio(video_path: str, output_path: str) -> bool:
+                '''ffmpegを使用して動画から音声を抽出'''
+                try:
+                    cmd = [
+                        'ffmpeg', '-i', video_path,
+                        '-vn', '-acodec', 'pcm_s16le',
+                        '-ar', '16000', '-ac', '1',
+                        '-y', output_path
+                    ]
+                    subprocess.run(cmd, capture_output=True, check=True)
+                    return True
+                except Exception as e:
+                    print(f"Audio extraction error: {e}")
+                    return False
+
+            def capture_snapshots(video_path: str, interval: int, context_range: int) -> List[Dict[str, Any]]:
+                '''指定した間隔でスナップショットを抽出'''
+                cap = cv2.VideoCapture(video_path)
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                duration = total_frames / fps if fps > 0 else 0
+
+                snapshots = []
+                timestamp = 0.0
+                frame_interval = int(fps * interval)
+
+                frame_count = 0
+                while timestamp < duration:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_count)
+                    ret, frame = cap.read()
+
+                    if ret:
+                        # 画像を圧縮
+                        height, width = frame.shape[:2]
+                        if width > 1280:
+                            scale = 1280 / width
+                            new_width = 1280
+                            new_height = int(height * scale)
+                            frame = cv2.resize(frame, (new_width, new_height))
+
+                        # JPEG品質85%でエンコード
+                        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                        img_base64 = base64.b64encode(buffer).decode('utf-8')
+
+                        # コンテキスト範囲を計算
+                        context_start = max(0, timestamp - context_range)
+                        context_end = min(duration, timestamp + context_range)
+
+                        snapshots.append({
+                            'timestamp': timestamp,
+                            'image_base64': f'data:image/jpeg;base64,{img_base64}',
+                            'context_start': context_start,
+                            'context_end': context_end
+                        })
+
+                    timestamp += interval
+                    frame_count += frame_interval
+
+                cap.release()
+                return snapshots
+
+            def main(video_file: Dict[str, Any], interval_seconds: int = 90, context_range: int = 30) -> Dict[str, Any]:
+                # 動画ファイルのパスを取得
+                video_path = video_file.get('path', '')
+
+                if not video_path or not os.path.exists(video_path):
+                    return {
+                        'error': '動画ファイルが見つかりません',
+                        'snapshots': [],
+                        'video_duration': 0,
+                        'segment_count': 0
+                    }
+
+                # 動画の長さを取得
+                cap = cv2.VideoCapture(video_path)
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                duration = total_frames / fps if fps > 0 else 0
+                cap.release()
+
+                # 音声を抽出
+                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as audio_file:
+                    audio_path = audio_file.name
+
+                audio_extracted = extract_audio(video_path, audio_path)
+
+                # スナップショットを抽出
+                snapshots = capture_snapshots(video_path, interval_seconds, context_range)
+
+                return {
+                    'snapshots': snapshots,
+                    'audio_file': audio_path if audio_extracted else '',
+                    'video_duration': duration,
+                    'segment_count': len(snapshots)
+                }
+          outputs:
+            - variable: snapshots
+              type: array
+              label: スナップショット
+            - variable: audio_file
+              type: string
+              label: 音声ファイル
+            - variable: video_duration
+              type: number
+              label: 動画長（秒）
+            - variable: segment_count
+              type: number
+              label: セグメント数
+          outputs_mapping: {}
+        id: '1770557302678'
+        position:
+          x: 320
+          y: 200
+        type: custom
+
+      # LLM Node 1: Transcription (Gemini 2.5)
+      - data:
+          type: llm
+          title: 文字起こし
+          model:
+            provider: google
+            name: gemini-2.5-flash
+            mode: chat
+            completion_params:
+              temperature: 0.3
+              max_tokens: 32000
+          prompt_template:
+            - role: system
+              text: |
+                あなたは音声文字起こしの専門家です。提供された音声を正確に文字起こししてください。
+                以下のフォーマットで出力してください：
+                [HH:MM:SS] 発言内容
+
+                タイムスタンプは発言の開始時刻を、発言者を特定できる場合は発言者名も含めてください。
+            - role: user
+              text: |
+                以下の音声を文字起こしてください。タイムスタンプを[HH:MM:SS]形式で各発言の先頭に付けてください。
+                複数の話者がいる場合は、話者を区別してください。
+          context:
+            enabled: false
+            variable_selector: []
+          vision:
+            enabled: false
+          voice:
+            enabled: true
+            input: '{{#1770557302678.audio_file#}}'
+        id: '1770557302778'
+        position:
+          x: 560
+          y: 80
+        type: custom
+
+      # Code Node 2: Data Linking (Parse Transcript + Link with Snapshots)
+      - data:
+          type: code
+          title: データ紐付け
+          code: |
+            import re
+            from typing import Dict, List, Any
+            from datetime import datetime, timedelta
+
+            def parse_transcript(transcript: str) -> List[Dict[str, Any]]:
+                '''文字起こしをパースしてタイムスタンプ付きのエントリに変換'''
+                entries = []
+                # タイムスタンプパターン: [HH:MM:SS] または [MM:SS]
+                pattern = r'\[(\d{1,2}):(\d{2}):(\d{2})\]\s*(.*?)(?=\n|\[|$)'
+                matches = re.findall(pattern, transcript, re.DOTALL)
+
+                for match in matches:
+                    hours, minutes, seconds, text = match
+                    timestamp = int(hours) * 3600 + int(minutes) * 60 + int(seconds)
+                    if text.strip():
+                        entries.append({
+                            'timestamp': timestamp,
+                            'text': text.strip()
+                        })
+
+                return entries
+
+            def link_transcript_to_snapshots(snapshots: List[Dict[str, Any]], transcript_entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+                '''各スナップショットに対応するtranscriptを紐付け'''
+                segments = []
+
+                for snapshot in snapshots:
+                    context_start = snapshot['context_start']
+                    context_end = snapshot['context_end']
+
+                    # コンテキスト範囲内のtranscriptを抽出
+                    context_entries = [
+                        entry for entry in transcript_entries
+                        if context_start <= entry['timestamp'] <= context_end
+                    ]
+
+                    # コンテキストtranscriptを構築
+                    context_transcript = '\n'.join([
+                        f"[{format_timestamp(entry['timestamp'])}] {entry['text']}"
+                        for entry in context_entries
+                    ])
+
+                    segments.append({
+                        'timestamp': snapshot['timestamp'],
+                        'image_base64': snapshot['image_base64'],
+                        'context_start': context_start,
+                        'context_end': context_end,
+                        'context_transcript': context_transcript
+                    })
+
+                return segments
+
+            def format_timestamp(seconds: float) -> str:
+                '''秒をHH:MM:SS形式に変換'''
+                hours = int(seconds // 3600)
+                minutes = int((seconds % 3600) // 60)
+                secs = int(seconds % 60)
+                return f'{hours:02d}:{minutes:02d}:{secs:02d}'
+
+            def main(snapshots: List[Dict[str, Any]], llm_text: str) -> Dict[str, Any]:
+                transcript_entries = parse_transcript(llm_text)
+                segments = link_transcript_to_snapshots(snapshots, transcript_entries)
+
+                return {
+                    'segments': segments,
+                    'transcript_entries': transcript_entries,
+                    'full_transcript': llm_text
+                }
+          outputs:
+            - variable: segments
+              type: array
+              label: セグメント
+            - variable: transcript_entries
+              type: array
+              label: Transcriptエントリ
+            - variable: full_transcript
+              type: string
+              label: 完全な文字起こし
+          outputs_mapping: {}
+        id: '1770557302878'
+        position:
+          x: 560
+          y: 280
+        type: custom
+
+      # Code Node 3: Batch Splitting
+      - data:
+          type: code
+          title: バッチ分割
+          code: |
+            from typing import Dict, List, Any
+
+            def main(segments: List[Dict[str, Any]], batch_size: int = 16) -> Dict[str, Any]:
+                '''セグメントをバッチに分割（Gemini 2.5の画像制限対応）'''
+                batches = []
+
+                for i in range(0, len(segments), batch_size):
+                    batch = segments[i:i + batch_size]
+                    batches.append({
+                        'batch_index': len(batches),
+                        'segments': batch
+                    })
+
+                return {
+                    'batches': batches,
+                    'total_batches': len(batches),
+                    'total_segments': len(segments)
+                }
+          outputs:
+            - variable: batches
+              type: array
+              label: バッチ
+            - variable: total_batches
+              type: number
+              label: 総バッチ数
+            - variable: total_segments
+              type: number
+              label: 総セグメント数
+          outputs_mapping: {}
+        id: '1770557302978'
+        position:
+          x: 800
+          y: 280
+        type: custom
+
+      # Iteration Node
+      - data:
+          type: iteration
+          title: バッチ処理
+          iterator_selector:
+            - '1770557302978'
+            - batches
+          output_selector:
+            - item
+          output_type: array
+          is_parallel: true
+        id: '1770557303078'
+        position:
+          x: 1040
+          y: 280
+        type: custom
+
+      # LLM Node 2: Image Analysis (Gemini 2.5 Vision)
+      - data:
+          type: llm
+          title: 画像分析
+          model:
+            provider: google
+            name: gemini-2.5-flash
+            mode: chat
+            completion_params:
+              temperature: 0.5
+              max_tokens: 8000
+          prompt_template:
+            - role: system
+              text: |
+                あなたは動画コンテンツの分析専門家です。提供された画像と文字起こしから、以下を抽出してください：
+
+                1. **summary**: セグメントの要約（3-5文）
+                2. **slide_text**: スライドに含まれるテキスト（OCRで抽出）
+                3. **key_points**: 重要なポイント（3-5点の箇条書き）
+                4. **importance_score**: 重要度スコア（1-10、10が最重要）
+
+                出力はJSON形式で行ってください：
+                ```json
+                {
+                  "summary": "要約...",
+                  "slide_text": "スライドテキスト...",
+                  "key_points": ["ポイント1", "ポイント2", ...],
+                  "importance_score": 8.5
+                }
+                ```
+            - role: user
+              text: |
+                以下のセグメントを分析してください。複数のセグメントが含まれる場合は、それぞれについて分析してください。
+
+                セグメント数: {{#1770557303078.item.segments|length#}}
+
+                各セグメントについて、画像と対応する文字起こしを分析してJSON形式で出力してください。
+                出力形式: {"results": [{"timestamp": ..., "summary": ..., "slide_text": ..., "key_points": [...], "importance_score": ...}, ...]}
+          context:
+            enabled: false
+            variable_selector: []
+          vision:
+            enabled: true
+        id: '1770557303178'
+        position:
+          x: 1280
+          y: 280
+        type: custom
+
+      # Code Node 4: Importance Scoring
+      - data:
+          type: code
+          title: 重要度スコア計算
+          code: |
+            import json
+            from typing import Dict, List, Any
+
+            def parse_llm_output(llm_output: str) -> List[Dict[str, Any]]:
+                '''LLM出力をパース'''
+                try:
+                    data = json.loads(llm_output)
+                    return data.get('results', [])
+                except json.JSONDecodeError:
+                    # フォールバック: テキストから情報を抽出
+                    return []
+
+            def normalize_importance_scores(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+                '''重要度スコアを正規化（0-1）'''
+                if not results:
+                    return []
+
+                scores = [r.get('importance_score', 5) for r in results]
+                min_score = min(scores)
+                max_score = max(scores)
+
+                if max_score == min_score:
+                    for r in results:
+                        r['normalized_importance'] = 0.5
+                else:
+                    for r in results:
+                        raw_score = r.get('importance_score', 5)
+                        normalized = (raw_score - min_score) / (max_score - min_score)
+                        r['normalized_importance'] = round(normalized, 3)
+
+                return results
+
+            def main(iteration_item: Dict[str, Any], llm_text: str) -> Dict[str, Any]:
+                results = parse_llm_output(llm_text)
+                results = normalize_importance_scores(results)
+
+                # 重要なセグメントをハイライト（正規化スコア > 0.7）
+                important_segments = [
+                    r for r in results
+                    if r.get('normalized_importance', 0) > 0.7
+                ]
+
+                return {
+                    'results': results,
+                    'important_segments': important_segments,
+                    'batch_index': iteration_item.get('batch_index', 0)
+                }
+          outputs:
+            - variable: results
+              type: array
+              label: 分析結果
+            - variable: important_segments
+              type: array
+              label: 重要セグメント
+            - variable: batch_index
+              type: number
+              label: バッチインデックス
+          outputs_mapping: {}
+        id: '1770557303278'
+        position:
+          x: 1520
+          y: 280
+        type: custom
+
+      # Code Node 5: Collect Results
+      - data:
+          type: code
+          title: 結果収集
+          code: |
+            from typing import Dict, List, Any
+
+            def main(all_results: List[Dict[str, Any]], full_transcript: str, video_duration: float, total_segments: int) -> Dict[str, Any]:
+                '''全バッチの結果を統合'''
+                all_segments = []
+                all_important = []
+
+                for result in all_results:
+                    all_segments.extend(result.get('results', []))
+                    all_important.extend(result.get('important_segments', []))
+
+                # 重要度でソート
+                all_segments.sort(key=lambda x: x.get('importance_score', 0), reverse=True)
+
+                return {
+                    'segments': all_segments,
+                    'important_segments': all_important,
+                    'full_transcript': full_transcript,
+                    'metadata': {
+                        'video_duration': video_duration,
+                        'total_segments': total_segments,
+                        'important_count': len(all_important)
+                    }
+                }
+          outputs:
+            - variable: segments
+              type: array
+              label: 全セグメント
+            - variable: important_segments
+              type: array
+              label: 重要セグメント
+            - variable: full_transcript
+              type: string
+              label: 完全な文字起こし
+            - variable: metadata
+              type: object
+              label: メタデータ
+          outputs_mapping: {}
+        id: '1770557303378'
+        position:
+          x: 1760
+          y: 280
+        type: custom
+
+      # LLM Node 3: Action Items Extraction
+      - data:
+          type: llm
+          title: アクションアイテム抽出
+          model:
+            provider: google
+            name: gemini-2.5-flash
+            mode: chat
+            completion_params:
+              temperature: 0.4
+              max_tokens: 4000
+          prompt_template:
+            - role: system
+              text: |
+                あなたは会議の議事録専門家です。提供された文字起こしとセグメント要約から、アクションアイテムを抽出してください。
+
+                以下の情報を特定してください：
+                1. **task**: タスクの内容
+                2. **assignee**: 担当者（特定できる場合）
+                3. **deadline**: 期限（言及がある場合）
+                4. **priority**: 優先度（high/medium/low）
+                5. **context**: タスクの背景
+
+                出力はJSON形式で行ってください：
+                ```json
+                {
+                  "action_items": [
+                    {
+                      "task": "タスク内容",
+                      "assignee": "担当者名",
+                      "deadline": "期限",
+                      "priority": "high",
+                      "context": "背景"
+                    }
+                  ]
+                }
+                ```
+            - role: user
+              text: |
+                以下の会議記録からアクションアイテムを抽出してください。
+
+                文字起こし:
+                {{#1770557303378.full_transcript#}}
+
+                重要なセグメント:
+                {% for seg in 1770557303378.important_segments %}
+                - {{ seg.summary }}
+                {% endfor %}
+          context:
+            enabled: false
+            variable_selector: []
+          vision:
+            enabled: false
+        id: '1770557303478'
+        position:
+          x: 1760
+          y: 100
+        type: custom
+
+      # Template Transform: Final Output
+      - data:
+          type: template-transform
+          title: 最終出力生成
+          template: |
+            # 動画ドキュメント
+
+            ## メタデータ
+
+            - 動画長: `{{ format_duration(1770557303378.metadata.video_duration) }}`
+            - セグメント数: `{{ 1770557303378.metadata.total_segments }}`
+            - 重要セグメント: `{{ 1770557303378.metadata.important_count }}`
+
+            ---
+
+            ## 目次
+
+            {% for seg in 1770557303378.segments %}
+            {{ loop.index }}. [{{ format_timestamp(seg.timestamp) }}] {% if seg.slide_text %}{{ seg.slide_text[:50] }}{% else %}セグメント {{ loop.index }}{% endif %}
+            {% endfor %}
+
+            ---
+
+            ## セグメント詳細
+
+            {% for seg in 1770557303378.segments %}
+            ### {{ loop.index }}. {{ format_timestamp(seg.timestamp) }} {% if seg.normalized_importance > 0.7 %}⭐ 重要{% endif %}
+
+            **重要度**: `{{ seg.importance_score }}/10`
+
+            {% if seg.slide_text %}
+            **スライドテキスト**:
+            {{ seg.slide_text }}
+            {% endif %}
+
+            **要約**:
+            {{ seg.summary }}
+
+            **キーポイント**:
+            {% for point in seg.key_points %}
+            - {{ point }}
+            {% endfor %}
+
+            ---
+
+            {% endfor %}
+
+            ## アクションアイテム
+
+            {% if 1770557303478.action_items %}
+            {% for item in 1770557303478.action_items %}
+            ### {{ item.task }}
+
+            - **担当者**: {{ item.assignee if item.assignee else 'TBD' }}
+            - **期限**: {{ item.deadline if item.deadline else '未定' }}
+            - **優先度**: {{ item.priority }}
+            - **背景**: {{ item.context }}
+
+            {% endfor %}
+            {% else %}
+            アクションアイテムはありませんでした。
+            {% endif %}
+
+            ---
+
+            ## 完全な文字起こし
+
+            {{ 1770557303378.full_transcript }}
+          output_type: string
+          variables: []
+        id: '1770557303578'
+        position:
+          x: 2000
+          y: 280
+        type: custom
+
+      # End Node
+      - data:
+          type: end
+          variables:
+            - variable: '1770557303578.output'
+              label: ドキュメント
+            - variable: '1770557303378.important_segments'
+              label: 重要セグメント一覧
+            - variable: '1770557303478.action_items'
+              label: アクションアイテム
+        id: '1770557303678'
+        position:
+          x: 2240
+          y: 280
+        type: custom

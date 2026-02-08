@@ -1,0 +1,648 @@
+# Dify DSL 作成ルール
+
+このファイルは、Dify DSLファイル（YAML形式）を作成・編集する際に従うべきルールとガイドラインを定義します。
+
+---
+
+## ルール1: DSLファイル作成ガイドライン
+
+### ファイル構造要件
+
+すべてのDSLファイルは以下の完全な構造を含める必要があります：
+
+```yaml
+app:
+  description: ''
+  icon: 🤖
+  icon_background: '#FFEAD5'
+  mode: workflow  # または chatflow
+  name: ''
+  use_icon_as_answer_icon: false
+
+kind: app
+version: 0.1.2
+
+workflow:
+  environment_variables: []
+  conversation_variables: []
+  features: {...}  # 完全なfeaturesオブジェクト
+  graph:
+    edges: []
+    nodes: []
+```
+
+### 必須フィールドチェックリスト
+
+- [ ] `app.description`: アプリの説明
+- [ ] `app.icon`: 絵文字（1文字）
+- [ ] `app.icon_background`: 16進色コード（#RRGGBB形式）
+- [ ] `app.mode`: workflow または chatflow
+- [ ] `app.name`: アプリ名（空白可能だが推奨）
+- [ ] `kind`: "app"（固定）
+- [ ] `version`: "0.1.2"（固定）
+- [ ] `workflow.environment_variables`: 空配列または定義済み変数
+- [ ] `workflow.conversation_variables`: 空配列または定義済み変数
+- [ ] `workflow.features`: 完全なfeaturesオブジェクト
+- [ ] `workflow.graph.edges`: エッジ配列
+- [ ] `workflow.graph.nodes`: ノード配列
+
+### バージョン指定ルール
+
+- 常に `version: 0.1.2` を使用
+- 将来のバージョンとの互換性のため、kindフィールドは必須
+
+### 検証要件
+
+- YAML構文が有効であること
+- すべてのノードIDが一意であること
+- すべてのエッジ参照が有効なノードIDを指していること
+- DAG構造（循環なし）が維持されていること
+
+---
+
+## ルール2: ノード命名規則
+
+### ID生成ルール
+
+ノードIDにはUnixタイムスタンプ（ミリ秒）を使用します：
+
+```yaml
+id: '1739026589234'  # 13桁の数字（文字列としてクォート）
+```
+
+**ガイドライン:**
+- 現在のタイムスタンプをミリ秒単位で取得
+- 一意性を保証するため、同じタイムスタンプの使用を避ける
+- 複数のノードを同時に作成する場合、タイムスタンプにインデックスを追加
+
+```python
+# PythonでのID生成例
+import time
+base_timestamp = int(time.time() * 1000)
+node_ids = [f'{base_timestamp + i}' for i in range(5)]
+# ['1739026589234', '1739026589235', '1739026589236', ...]
+```
+
+### ラベル要件
+
+- **言語**: 日本語または英語で一貫性を維持
+- **形式**: 簡潔で説明的な名前
+- **長さ**: 20文字以内を推奨
+
+### ノードタイプ別命名パターン
+
+| ノードタイプ | 推奨命名パターン | 例 |
+|-------------|-----------------|-----|
+| Start | start | start, input_start |
+| End | end | end, output_end |
+| LLM | {purpose}_llm | summarize_llm, translate_llm |
+| Template Transform | {purpose}_transform | format_transform, clean_transform |
+| If-Else | {condition}_check | score_check, validation_check |
+| Question Classifier | {topic}_classifier | intent_classifier, category_classifier |
+| Knowledge Retrieval | {dataset}_retrieval | faq_retrieval, doc_retrieval |
+| Code | {function}_code | process_code, calculate_code |
+| Iteration | {target}_iteration | items_iteration, results_iteration |
+| Tool | {tool_name}_tool | weather_tool, search_tool |
+| Parameter Extractor | {param}_extractor | email_extractor, info_extractor |
+
+### 衝突回避
+
+- 同じワークフロー内で同じIDを使用しない
+- 同じ名前のノードを避ける（必要に応じてサフィックスを追加）
+
+---
+
+## ルール3: 構造検証ルール
+
+### スキーマ検証
+
+すべてのノードは以下の基本構造に従う必要があります：
+
+```yaml
+- data:
+    type: <node_type>
+    # ... ノードタイプ固有のフィールド
+  id: '<unique_id>'
+  position: {x: <number>, y: <number>}
+  type: custom
+```
+
+### 参照整合性チェック
+
+**エッジ参照:**
+- すべての `source` が有効なノードIDを指していること
+- すべての `target` が有効なノードIDを指していること
+- 分岐ノードの場合、`sourceHandle` が有効な条件IDを指していること
+
+```yaml
+# 正しいエッジ定義
+edges:
+  - source: '1739026589234'  # 存在するノードID
+    sourceHandle: source
+    target: '1739026589236'  # 存在するノードID
+    targetHandle: target
+```
+
+**変数セレクタ参照:**
+- すべての `variable_selector` が有効なノードIDとフィールド名を指していること
+- ネストされたフィールドが存在すること
+
+```yaml
+# 正しい変数セレクタ
+variable_selector:
+  - '1739026589234'  # 存在するノードID
+  - query           # 存在するフィールド名
+```
+
+### サイクル検出
+
+- ノードAがノードBに接続し、ノードBが（直接または間接的に）ノードAに接続するサイクルを避ける
+- DAG（有向非巡回グラフ）構造を維持する
+
+### 型検証
+
+- `model` オブジェクト: 必須フィールド（provider, name）が存在
+- `variables` 配列: 各要素に `variable`, `type`, `label` が存在
+- `prompt_template` 配列: 各要素に `role`, `text` が存在
+
+---
+
+## ルール4: セキュリティガイドライン
+
+### APIキーの扱い
+
+- DSLファイル内にAPIキーを直接含めない
+- APIキーは環境変数またはDifyの設定で管理
+- 誤ってAPIキーが含まれた場合は、直ちに削除してコミット履歴をクリーンアップ
+
+### 機密データ保護
+
+- パスワード、トークン、シークレットをDSLファイルに含めない
+- 機密情報は環境変数を通じて参照
+
+```yaml
+# 良い例（環境変数を使用）
+workflow:
+  environment_variables:
+    - name: API_ENDPOINT
+      value: 'https://api.example.com'
+      value_type: string
+
+# 悪い例（ハードコードされたシークレット）
+# api_key: 'sk-1234567890abcdef'
+```
+
+### 入力の検証
+
+- ユーザー入力を検証するノードを含める
+- 最大長制限を設定
+- 不正なデータをフィルタリング
+
+```yaml
+# 入力検証の例
+- data:
+    type: start
+    variables:
+      - variable: query
+        type: text-input
+        label: クエリ
+        required: true
+        max_length: 1000  # 最大長制限
+```
+
+### 出力サニタイズ
+
+- ユーザーに表示される出力をサニタイズ
+- HTMLタグやスクリプトをエスケープ
+
+---
+
+## ルール5: 変数参照ルール
+
+### セレクタ形式検証
+
+variable_selectorは常に配列形式で指定：
+
+```yaml
+variable_selector:
+  - node_id
+  - field_name
+  - nested_field  # オプション
+```
+
+### スコープルール
+
+- 変数は定義されたノードの後でのみ使用可能
+- 上流ノードの変数のみ参照可能（下流ノードは不可）
+- Iterationノード内では、イテレータ変数のみ使用可能
+
+```yaml
+# 正しい参照順序
+nodes:
+  - id: 'node_1'  # 定義
+    data:
+      variables:
+        - variable: output
+  - id: 'node_2'  # node_1の変数を参照
+    data:
+      variable_selector:
+        - node_1
+        - output
+```
+
+### テンプレート構文ルール
+
+**プロンプトテンプレート（LLMノード）:**
+```yaml
+prompt_template:
+  - role: user
+    text: |
+      入力: {{#start.query#}}
+      コンテキスト: {{#retrieval.result#}}
+```
+
+**Jinja2テンプレート（Template Transformノード）:**
+```yaml
+template: |
+  {% for item in items %}
+  - {{ item.title }}
+  {% endfor %}
+```
+
+### エラーハンドリング
+
+- 参照先ノードが存在しない場合、エラーを明確に報告
+- 型不一致の場合、適切な変換を提案
+
+---
+
+## ルール6: エッジ接続ルール
+
+### 有効な接続タイプ
+
+| ソースタイプ | ターゲットタイプ | 制約 |
+|-------------|-----------------|------|
+| start | 任意（start以外） | 単一の出力のみ |
+| 任意 | end | 複数のノードがendに接続可能 |
+| llm | 任意 | 出力はtext, error |
+| if-else | 任意 | true/false分岐 |
+| question-classifier | 任意 | クラス別分岐 |
+| iteration | 任意 | 繰り返し処理 |
+| その他 | 任意 | 通常の接続 |
+
+### ソース/ターゲット互換性
+
+- LLMノードの出力（text, error）を参照する場合、正しいフィールド名を使用
+- Codeノードの出力は定義されたoutputs配列に一致する必要がある
+- Iterationノードの出力はoutput_selectorで指定された形式
+
+### ハンドル命名
+
+**通常の接続:**
+```yaml
+sourceHandle: source
+targetHandle: target
+```
+
+**If-Else分岐:**
+```yaml
+# True分岐
+sourceHandle: 'true'
+# False分岐
+sourceHandle: 'false'
+```
+
+**Question Classifier分岐:**
+```yaml
+# クラス1への分岐
+sourceHandle: 'class_1'
+# クラス2への分岐
+sourceHandle: 'class_2'
+```
+
+### フロー検証
+
+- 少なくとも1つのStartノードとEndノードが存在
+- すべてのノードがEndノードに到達可能（孤立ノードなし）
+- 分岐がすべてマージされている（必要な場合）
+
+---
+
+## ルール7: モデル設定ルール
+
+### プロバイダー仕様
+
+有効なプロバイダー名を使用：
+
+```yaml
+model:
+  provider: openai      # openai, anthropic, azure_openai, etc.
+  name: gpt-4           # モデル名
+  mode: chat            # chat, completion
+```
+
+**サポートされるプロバイダー:**
+- `openai`: GPT-4, GPT-3.5-turbo など
+- `anthropic`: Claude 3 Opus, Sonnet, Haiku
+- `azure_openai`: Azure OpenAIサービス
+- `google`: Gemini Pro
+- `mistral`: Mistralモデル
+
+### モデルパラメータ検証
+
+**必須フィールド:**
+```yaml
+model:
+  provider: <provider_name>
+  name: <model_name>
+  mode: <chat|completion>
+```
+
+**オプションフィールド（completion_params）:**
+```yaml
+completion_params:
+  temperature: 0.7    # 0.0 - 2.0
+  max_tokens: 2000    # 1 - 128000（モデル依存）
+  top_p: 0.9         # 0.0 - 1.0
+  frequency_penalty: 0.0  # -2.0 - 2.0
+  presence_penalty: 0.0   # -2.0 - 2.0
+```
+
+### 温度とトークン制限
+
+| モデル | 最大トークン | 推奨温度設定 |
+|--------|-------------|-------------|
+| GPT-4 | 8192 | 0.7 |
+| GPT-3.5-turbo | 4096/16385 | 0.7 |
+| Claude 3 Opus | 200000 | 0.7 |
+| Claude 3 Sonnet | 200000 | 0.7 |
+| Gemini Pro | 32000 | 0.9 |
+
+### 認証情報管理
+
+- APIキーをDSLファイルに含めない
+- プロバイダー設定はDifyプラットフォームで管理
+
+---
+
+## ルール8: YAMLフォーマットルール
+
+### インデント標準
+
+- 2スペースインデントを使用
+- タブ禁止
+
+```yaml
+# 正しいインデント
+workflow:
+  graph:
+    nodes:
+      - data:
+          type: llm
+        id: '123456'
+
+# 悪いインデント（タブまたは不統一）
+workflow:
+	graph:
+		nodes:
+			- data:
+				type: llm
+```
+
+### 引用規則
+
+- 特殊文字を含む文字列はシングルクォートで囲む
+- 数値はクォートなし
+- 真偽値はクォートなし
+
+```yaml
+# 正しい引用
+string_value: 'Hello, World!'
+number_value: 123
+boolean_value: true
+special_value: ':包含:コロン'
+
+# 悪い引用
+string_value: "Hello, World!"  # ダブルクォートは非推奨
+number_value: '123'  # 数値はクォート不要
+```
+
+### 行長制限
+
+- 80-100文字以内で折り返す
+- 長い文字列は複数行に分割
+
+```yaml
+# 長いテキストの分割
+prompt_template:
+  - role: system
+    text: |
+      あなたは親切なAIアシスタントです。
+      ユーザーの質問に丁寧にお答えください。
+      専門用語は避け、平易な言葉を使用してください。
+```
+
+### コメント使用
+
+- YAML標準の `#` コメントを使用
+- 複雑なロジックに説明を追加
+
+```yaml
+nodes:
+  # スタートノード：ユーザー入力を受け取る
+  - data:
+      type: start
+    id: '123456'
+```
+
+---
+
+## ルール9: ワークフローデザインパターン
+
+### 一般的なパターンライブラリ
+
+**1. 線形パイプライン:**
+```
+Start → LLM → Transform → End
+```
+
+**2. 条件分岐:**
+```
+Start → Classifier → [Technical → Tech_LLM → Merge]
+                    → [General → General_LLM → Merge] → End
+```
+
+**3. ループ処理:**
+```
+Start → Get_Items → Iteration → Process_Item → Collect → End
+```
+
+**4. エラーハンドリング:**
+```
+Start → LLM → If-Error → [True → Error_Handler → End]
+                  → [False → Success_Handler → End]
+```
+
+### 避けるべきアンチパターン
+
+1. **深すぎたネスト**: 5階層以上のネストを避ける
+2. **単一ノードへの多数の接続**: マージノードを追加
+3. **過度な条件分岐**: Question Classifierを使用して整理
+4. **巨大なLLMプロンプト**: Template Transformで分割
+
+### 最適化手法
+
+1. **バッチ処理**: Iterationノードを使用して複数アイテムを並列処理
+2. **キャッシュ**: 同じ入力に対する重複処理を避ける
+3. **条件付き実行**: If-Elseで不要な処理をスキップ
+
+### スケーラビリティ考慮事項
+
+- 大量のデータ処理にはIterationノードを使用
+- 外部API呼び出しはレート制限を考慮
+- メモリ使用量に注意（特に大きな配列）
+
+---
+
+## ルール10: テストと検証
+
+### 検証チェックリスト
+
+**構文検証:**
+- [ ] YAML構文が有効
+- [ ] すべての引用符が正しく閉じられている
+- [ ] インデントが一貫している
+
+**構造検証:**
+- [ ] すべてのノードIDが一意
+- [ ] すべてのエッジ参照が有効
+- [ ] DAG構造（サイクルなし）
+- [ ] 少なくとも1つのStartノードとEndノード
+
+**参照検証:**
+- [ ] すべてのvariable_selectorが有効
+- [ ] すべてのテンプレート変数が定義済み
+- [ ] モデル名とプロバイダーが有効
+
+### テスト手順
+
+1. **ローカル検証**:
+   ```bash
+   # YAML構文検証
+   yamllint workflow.yml
+
+   # スキーマ検証（カスタムスクリプト）
+   python validate_dsl.py workflow.yml
+   ```
+
+2. **Difyインポートテスト**:
+   - Dify UIでDSLファイルをインポート
+   - すべてのノードが正しく表示されることを確認
+   - ワークフローを実行してエラーがないことを確認
+
+3. **エッジケーステスト**:
+   - 空入力
+   - 長いテキスト
+   - 特殊文字
+   - 最大同時実行
+
+### デバッグ手法
+
+1. **ノード単位テスト**: 各ノードを個別にテスト
+2. **段階的実行**: 小さなワークフローから始めて拡張
+3. **ログ確認**: 実行ログでエラーの詳細を確認
+
+### エラー報告
+
+エラーが発生した場合、以下の情報を収集：
+
+1. エラーメッセージの全文
+2. 問題のノードIDとタイプ
+3. 入力データ（機密情報は除く）
+4. 期待される動作
+5. 実際の動作
+
+---
+
+## 付録: クイックリファレンス
+
+### ノードタイプ早見表
+
+| タイプ | タイプ名 | 主な用途 |
+|--------|---------|----------|
+| 開始 | start | 入力定義 |
+| 終了 | end | 出力定義 |
+| LLM | llm | テキスト生成 |
+| 変換 | template-transform | テンプレート適用 |
+| 分岐 | if-else | 条件分岐 |
+| 分類 | question-classifier | 質問分類 |
+| 検索 | knowledge-retrieval | ナレッジ検索 |
+| コード | code | Python実行 |
+| 繰り返し | iteration | リスト処理 |
+| ツール | tool | 外部API |
+| 抽出 | parameter-extractor | パラメータ抽出 |
+
+### variable_selectorパターン
+
+```yaml
+# Startノードの入力
+['start', 'query']
+
+# LLMノードの出力
+['llm_node', 'text']
+
+# Codeノードの出力
+['code_node', 'result']
+
+# ネストされたフィールド
+['node', 'data', 'items', 0, 'title']
+
+# 配列全体
+['node', 'items']
+```
+
+### よく使うテンプレート
+
+**シンプルなLLM呼び出し:**
+```yaml
+- data:
+    type: llm
+    model:
+      provider: openai
+      name: gpt-4
+      mode: chat
+    prompt_template:
+      - role: user
+        text: '{{#start.query#}}'
+  id: '{{timestamp}}'
+  position: {x: 300, y: 200}
+  type: custom
+```
+
+**条件分岐:**
+```yaml
+- data:
+    type: if-else
+    conditions:
+      - id: 'cond_1'
+        variable_selector: ['start', 'score']
+        comparison_operator: '>='
+        value: '60'
+    logical_operator: and
+  id: '{{timestamp}}'
+  position: {x: 400, y: 200}
+  type: custom
+```
+
+**テンプレート変換:**
+```yaml
+- data:
+    type: template-transform
+    template: |
+      結果: {{#llm.text#}}
+      スコア: {{#start.score#}}
+    output_type: string
+  id: '{{timestamp}}'
+  position: {x: 500, y: 200}
+  type: custom
+```
